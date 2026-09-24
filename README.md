@@ -2,64 +2,45 @@
 
 **Rail** is an agent spend-and-settle layer: agents buy on a human's behalf under an explicit budget, with a propose→approve gate and a receipts/refunds ledger. It is **not** a marketplace, storefront, or outreach tool. Rail wraps Stripe Link for credentials and owns budget, policy, and receipts. It does not issue cards. Default mode is **dry-run** (no network, no charges).
 
-## Install (Cursor)
+## Install
 
-Add to your Cursor MCP config (e.g. `~/.cursor/mcp.json` or project `.cursor/mcp.json`). Keep the placeholders; desktop paths below are comments only.
+Works in Cursor, Claude Desktop, and any other stdio MCP host. Requires Node.js 20+. The published package runs compiled JavaScript (`dist/`); end users do not need `tsx`.
 
-```jsonc
+```json
 {
   "mcpServers": {
     "rail": {
       "command": "npx",
-      "args": [
-        "tsx",
-        // macOS Desktop: "/Users/<you>/Desktop/rail-mcp/src/index.ts"
-        // Windows Desktop: "C:\\Users\\<you>\\Desktop\\rail-mcp\\src\\index.ts"
-        "<path-to-rail-mcp>/src/index.ts"
-      ],
-      "env": {
-        "RAIL_MODE": "dry_run"
-      }
+      "args": ["-y", "@rail-mcp/server"]
     }
   }
 }
 ```
 
-Or with an absolute `node`+`tsx` path after `npm install` in this directory:
+`RAIL_MODE` defaults to `dry_run`. Never put Stripe or Link secrets (`STRIPE_SECRET_KEY`, `LINK_ACCESS_TOKEN`, or live-spend flags) in this shared snippet. Real charges stay off unless those gates are set on purpose, outside the shared config. See [Stripe Link seam](#stripe-link-seam).
 
-```jsonc
-{
-  "mcpServers": {
-    "rail": {
-      // macOS Desktop: "/Users/<you>/Desktop/rail-mcp/node_modules/.bin/tsx"
-      // Windows Desktop: "C:\\Users\\<you>\\Desktop\\rail-mcp\\node_modules\\.bin\\tsx.cmd"
-      "command": "<path-to-rail-mcp>/node_modules/.bin/tsx",
-      "args": [
-        // macOS Desktop: "/Users/<you>/Desktop/rail-mcp/src/index.ts"
-        // Windows Desktop: "C:\\Users\\<you>\\Desktop\\rail-mcp\\src\\index.ts"
-        "<path-to-rail-mcp>/src/index.ts"
-      ],
-      // macOS Desktop: "/Users/<you>/Desktop/rail-mcp"
-      // Windows Desktop: "C:\\Users\\<you>\\Desktop\\rail-mcp"
-      "cwd": "<path-to-rail-mcp>",
-      "env": {
-        "RAIL_MODE": "dry_run"
-      }
-    }
-  }
-}
+**Grok Bot:** add a custom MCP via `npx -y @rail-mcp/server`.
+
+**Cursor:** one-click install from the deeplink below ([install links](https://cursor.com/docs/mcp/install-links)). The `config` value is the base64 of `{"command":"npx","args":["-y","@rail-mcp/server"]}`.
+
+[Install Rail in Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=rail&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkByYWlsLW1jcC9zZXJ2ZXIiXX0=)
+
+```
+cursor://anysphere.cursor-deeplink/mcp/install?name=rail&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkByYWlsLW1jcC9zZXJ2ZXIiXX0=
 ```
 
-## Setup
+Ledger files (`budget.json`, `proposals.json`, `receipts.json`) are written to `./data` under the process working directory, or to `RAIL_DATA_DIR` when that is set. They are local state, not part of the npm package.
+
+### Local checkout
+
+`tsx` is a dev dependency for dogfood in this repo. `npm run smoke` runs the TypeScript sources directly and does not need a build. `npm start` compiles first, then runs `dist/index.js` (the same file the `rail-mcp` bin points at).
 
 ```bash
-cd <path-to-rail-mcp>
 npm install
-npm start          # stdio MCP server
-npm run smoke      # ledger smoke test (no MCP client)
+npm start          # tsc → dist/, then stdio MCP server
+npm run dev        # tsx watch src/index.ts
+npm run smoke      # ledger smoke test (no MCP client, dry-run, no network)
 ```
-
-State lives in `./data/` (`budget.json`, `proposals.json`, `receipts.json`) — gitignored.
 
 ## Tools
 
@@ -97,6 +78,7 @@ Rail asks Link for a one-time credential. Rail still decides budget and policy a
 | Env | Role |
 |-----|------|
 | `RAIL_MODE` | `dry_run` (default) or `live` |
+| `RAIL_DATA_DIR` | Ledger directory. Default is `./data` from the process working directory |
 | `STRIPE_SECRET_KEY` | Required for live. Not used to issue cards or as a Link bearer token |
 | `RAIL_LIVE=1` | Explicit live approval alongside the secret key |
 | `RAIL_ALLOW_LIVE_CHARGE=1` | Additional gate before any Link HTTP |
@@ -111,4 +93,4 @@ Rail asks Link for a one-time credential. Rail still decides budget and policy a
 
 ## License
 
-Private / local use.
+Install from npm as `@rail-mcp/server`. No license file is included in 0.1.0. Publishing the package does not make this GitHub repository public.

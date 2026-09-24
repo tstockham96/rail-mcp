@@ -1,0 +1,12 @@
+# Present so npm pack does not apply .gitignore.
+# dist/ is gitignored but must be in the published tarball (package.json "files").
+src/
+scripts/
+data/
+.env
+.env.*
+*.log
+.DS_Store
+tsconfig.json
+tsconfig.build.json
+*.tgz

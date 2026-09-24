@@ -1,11 +1,16 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { nanoid } from 'nanoid';
 import { createSpendRequest, railMode, type RailMode } from './stripeLink.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const DATA_DIR = path.resolve(__dirname, '..', 'data');
+function resolveDataDir(): string {
+  const override = process.env.RAIL_DATA_DIR?.trim();
+  if (override) return path.resolve(override);
+  return path.resolve(process.cwd(), 'data');
+}
+
+/** Ledger directory: `RAIL_DATA_DIR`, or `./data` from the process working directory. */
+export const DATA_DIR = resolveDataDir();
 
 export type Mode = RailMode;
 
