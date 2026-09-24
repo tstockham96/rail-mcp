@@ -2,11 +2,16 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nanoid } from 'nanoid';
+import { createSpendRequest, railMode, type RailMode } from './stripeLink.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DATA_DIR = path.resolve(__dirname, '..', 'data');
 
-export type Mode = 'dry_run';
+export type Mode = RailMode;
+
+function mode(): Mode {
+  return railMode();
+}
 
 export interface Budget {
   amount_cents: number;
@@ -32,7 +37,7 @@ export interface Proposal {
   decided_at?: string;
 }
 
-export type ReceiptStatus = 'settled_dry_run' | 'refunded';
+export type ReceiptStatus = 'settled_dry_run' | 'link_pending_human' | 'refunded';
 
 export interface Receipt {
   id: string;
@@ -42,6 +47,8 @@ export interface Receipt {
   currency: string;
   status: ReceiptStatus;
   mode: Mode;
+  /** Link spend-request id from the settlement seam (fake in dry_run). */
+  settlement_ref: string;
   created_at: string;
   refunded_at?: string;
   refund_reason?: string;
@@ -54,8 +61,6 @@ interface ProposalsFile {
 interface ReceiptsFile {
   receipts: Receipt[];
 }
-
-const MODE: Mode = (process.env.RAIL_MODE as Mode) || 'dry_run';
 
 function usd(cents: number): string {
   return (cents / 100).toFixed(2);
@@ -123,7 +128,7 @@ function publicBudget(budget: Budget | null, receipts: Receipt[], openProposals:
   if (!budget) {
     return {
       ok: true as const,
-      mode: MODE,
+      mode: mode(),
       budget: null,
       spent_usd: '0.00',
       remaining_usd: null,
@@ -134,7 +139,7 @@ function publicBudget(budget: Budget | null, receipts: Receipt[], openProposals:
   const remaining = budget.amount_cents - spent;
   return {
     ok: true as const,
-    mode: MODE,
+    mode: mode(),
     budget: {
       amount_usd: usd(budget.amount_cents),
       currency: budget.currency,
@@ -215,7 +220,7 @@ export async function proposePurchase(args: {
 
   return {
     ok: true as const,
-    mode: MODE,
+    mode: mode(),
     proposal: {
       id: proposal.id,
       merchant: proposal.merchant,
@@ -242,7 +247,7 @@ export async function listProposals(args: {
 
   return {
     ok: true as const,
-    mode: MODE,
+    mode: mode(),
     status_filter: status,
     count: filtered.length,
     proposals: filtered.map((p) => ({
@@ -290,7 +295,7 @@ export async function decideProposal(args: {
     await writeJson('proposals.json', { proposals });
     return {
       ok: true as const,
-      mode: MODE,
+      mode: mode(),
       decision: 'reject' as const,
       proposal: {
         id: proposal.id,
@@ -302,10 +307,34 @@ export async function decideProposal(args: {
     };
   }
 
-  // approve — dry_run settlement
-  // TODO: stripe link — replace dry-run receipt with Stripe Link credential/settle flow
-  if (MODE !== 'dry_run') {
-    return { ok: false as const, error: `unsupported mode: ${MODE}` };
+  // Approve: proposal is still pending. over_budget stays advisory.
+  // Settlement goes through the Link seam (dry_run does not touch the network).
+  let spend;
+  try {
+    spend = await createSpendRequest({
+      merchant: proposal.merchant,
+      amountCents: proposal.amount_cents,
+      currency: proposal.currency,
+      proposalId: proposal.id,
+      url: proposal.url,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'createSpendRequest failed';
+    return { ok: false as const, error: message };
+  }
+
+  const dryRun = mode() === 'dry_run';
+  if (dryRun && spend.status !== 'dry_run_pending_human') {
+    return {
+      ok: false as const,
+      error: 'dry_run spend request missing dry_run_pending_human — receipt not written',
+    };
+  }
+  if (!dryRun && spend.status !== 'live_pending_human') {
+    return {
+      ok: false as const,
+      error: 'live spend request was not accepted — receipt not written',
+    };
   }
 
   const receipt: Receipt = {
@@ -314,8 +343,11 @@ export async function decideProposal(args: {
     merchant: proposal.merchant,
     amount_cents: proposal.amount_cents,
     currency: proposal.currency,
-    status: 'settled_dry_run',
-    mode: MODE,
+    // Dry-run ledger settlement only. A live Link request is still awaiting
+    // the human in Link and does not decrement budget.
+    status: dryRun ? 'settled_dry_run' : 'link_pending_human',
+    mode: dryRun ? 'dry_run' : 'live',
+    settlement_ref: spend.settlement_ref,
     created_at: new Date().toISOString(),
   };
 
@@ -335,7 +367,7 @@ export async function decideProposal(args: {
 
   return {
     ok: true as const,
-    mode: MODE,
+    mode: mode(),
     decision: 'approve' as const,
     proposal: {
       id: proposal.id,
@@ -351,6 +383,7 @@ export async function decideProposal(args: {
       currency: receipt.currency,
       status: receipt.status,
       mode: receipt.mode,
+      settlement_ref: receipt.settlement_ref,
       created_at: receipt.created_at,
     },
     remaining_usd: remaining === null ? null : usd(remaining),
@@ -367,7 +400,7 @@ export async function getReceipts(args: { limit?: number } = {}) {
 
   return {
     ok: true as const,
-    mode: MODE,
+    mode: mode(),
     count: slice.length,
     receipts: slice.map((r) => ({
       id: r.id,
@@ -377,6 +410,7 @@ export async function getReceipts(args: { limit?: number } = {}) {
       currency: r.currency,
       status: r.status,
       mode: r.mode,
+      settlement_ref: r.settlement_ref,
       created_at: r.created_at,
       refunded_at: r.refunded_at ?? null,
       refund_reason: r.refund_reason ?? null,
@@ -405,11 +439,11 @@ export async function refundReceipt(args: { receipt_id: string; reason?: string 
       receipt_id: receipt.id,
     };
   }
-  if (MODE !== 'dry_run') {
-    return { ok: false as const, error: `unsupported mode: ${MODE}` };
+  if (mode() !== 'dry_run') {
+    return { ok: false as const, error: `unsupported mode: ${mode()}` };
   }
 
-  // TODO: stripe link — reverse real settlement via Stripe when mode != dry_run
+  // Live Link reversals are not wired. Dry-run refunds only restore the local ledger.
   receipt.status = 'refunded';
   receipt.refunded_at = new Date().toISOString();
   receipt.refund_reason = args.reason;
@@ -421,7 +455,7 @@ export async function refundReceipt(args: { receipt_id: string; reason?: string 
 
   return {
     ok: true as const,
-    mode: MODE,
+    mode: mode(),
     receipt: {
       id: receipt.id,
       proposal_id: receipt.proposal_id,
