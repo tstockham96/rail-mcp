@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
+import { railMode } from './stripeLink.js';
 import {
   decideProposal,
   getBudget,
@@ -94,7 +95,7 @@ function createServer() {
     'decide_proposal',
     {
       description:
-        'Approve or reject a pending proposal. Approve in dry_run creates a settled_dry_run receipt and decrements remaining budget. Refuse double-decide.',
+        'Approve or reject a pending proposal. Approve in dry_run creates a settled_dry_run receipt with settlement_ref and decrements remaining budget. Refuse double-decide. Live spend is gated and does not charge by default.',
       inputSchema: z.object({
         proposal_id: z.string().describe('Proposal id (prop_…)'),
         decision: z.enum(['approve', 'reject']).describe('approve or reject'),
@@ -142,7 +143,7 @@ function createServer() {
 
 const handle = serveStdio(() => createServer());
 
-console.error('rail-mcp listening on stdio (mode=dry_run)');
+console.error(`rail-mcp listening on stdio (mode=${railMode()})`);
 
 process.on('SIGINT', () => {
   void handle.close();
