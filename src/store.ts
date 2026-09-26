@@ -3,14 +3,38 @@ import path from 'node:path';
 import { nanoid } from 'nanoid';
 import { createSpendRequest, railMode, type RailMode } from './stripeLink.js';
 
-function resolveDataDir(): string {
+let dataDirOverride: string | undefined;
+
+function envDataDir(): string | undefined {
   const override = process.env.RAIL_DATA_DIR?.trim();
-  if (override) return path.resolve(override);
-  return path.resolve(process.cwd(), 'data');
+  return override ? path.resolve(override) : undefined;
 }
 
-/** Ledger directory: `RAIL_DATA_DIR`, or `./data` from the process working directory. */
-export const DATA_DIR = resolveDataDir();
+/**
+ * Ledger directory.
+ * `setDataDirForTests` wins when a test has pinned a throwaway dir.
+ * Otherwise `RAIL_DATA_DIR`, or `./data` from the process working directory.
+ */
+export function getDataDir(): string {
+  if (dataDirOverride) return dataDirOverride;
+  return envDataDir() ?? path.resolve(process.cwd(), 'data');
+}
+
+/**
+ * Pin the ledger at a throwaway directory for tests.
+ * Refuses `./data` and `RAIL_DATA_DIR` so a test cannot write the real ledger.
+ */
+export function setDataDirForTests(dir: string): void {
+  const resolved = path.resolve(dir);
+  const cwdData = path.resolve(process.cwd(), 'data');
+  const fromEnv = envDataDir();
+  if (resolved === cwdData || resolved === fromEnv) {
+    throw new Error(
+      'setDataDirForTests refused: directory must not be ./data or RAIL_DATA_DIR',
+    );
+  }
+  dataDirOverride = resolved;
+}
 
 export type Mode = RailMode;
 
@@ -80,12 +104,12 @@ function newId(prefix: 'prop' | 'rcpt'): string {
 }
 
 async function ensureDataDir(): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.mkdir(getDataDir(), { recursive: true });
 }
 
 async function readJson<T>(file: string, fallback: T): Promise<T> {
   await ensureDataDir();
-  const p = path.join(DATA_DIR, file);
+  const p = path.join(getDataDir(), file);
   try {
     const raw = await fs.readFile(p, 'utf8');
     return JSON.parse(raw) as T;
@@ -98,7 +122,7 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
 
 async function writeJson(file: string, data: unknown): Promise<void> {
   await ensureDataDir();
-  const p = path.join(DATA_DIR, file);
+  const p = path.join(getDataDir(), file);
   const tmp = `${p}.${process.pid}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(data, null, 2) + '\n', 'utf8');
   await fs.rename(tmp, p);
@@ -475,12 +499,18 @@ export async function refundReceipt(args: { receipt_id: string; reason?: string 
   };
 }
 
-/** Wipe data files — for smoke tests only. */
+/** Wipe ledger files in the test directory. Refuses to run against the real ledger. */
 export async function resetStoreForTests(): Promise<void> {
-  await ensureDataDir();
+  if (!dataDirOverride) {
+    throw new Error(
+      'resetStoreForTests refused: call setDataDirForTests with a throwaway directory first',
+    );
+  }
+  const dir = getDataDir();
+  await fs.mkdir(dir, { recursive: true });
   for (const file of ['budget.json', 'proposals.json', 'receipts.json']) {
     try {
-      await fs.unlink(path.join(DATA_DIR, file));
+      await fs.unlink(path.join(dir, file));
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
     }

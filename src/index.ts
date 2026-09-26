@@ -20,6 +20,31 @@ function jsonResult(payload: unknown, isError = false) {
   };
 }
 
+interface ToolRisk {
+  title: string;
+  description: string;
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+}
+
+/** Spec defaults are the risky case. Set every hint explicitly. */
+function risk(input: ToolRisk) {
+  const annotations = {
+    title: input.title,
+    readOnlyHint: input.readOnlyHint,
+    destructiveHint: input.destructiveHint,
+    idempotentHint: input.idempotentHint,
+    openWorldHint: input.openWorldHint,
+  };
+  return {
+    title: input.title,
+    description: input.description,
+    annotations,
+  };
+}
+
 function createServer() {
   const server = new McpServer({
     name: 'rail',
@@ -29,8 +54,15 @@ function createServer() {
   server.registerTool(
     'set_budget',
     {
-      description:
-        'Overwrite the active agent spend budget. Returns current budget and remaining after prior settled spends.',
+      ...risk({
+        title: 'Set budget',
+        description:
+          'Overwrite the local spend budget. Changes the ledger limit only. Does not spend money, approve a card, settle a purchase, or contact Stripe or Link. Passing the same amount again does not add to the budget.',
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      }),
       inputSchema: z.object({
         amount_usd: z.number().describe('Budget amount in USD'),
         currency: z.string().optional().describe('Currency code; default USD'),
@@ -46,8 +78,15 @@ function createServer() {
   server.registerTool(
     'get_budget',
     {
-      description:
-        'Return active budget, spent, remaining, and count of open (pending) proposals.',
+      ...risk({
+        title: 'Get budget',
+        description:
+          'Read the active budget, amount spent, amount remaining, and the count of pending proposals. Does not change the ledger, spend money, or contact Stripe or Link.',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      }),
       inputSchema: z.object({}),
     },
     async () => {
@@ -59,8 +98,15 @@ function createServer() {
   server.registerTool(
     'propose_purchase',
     {
-      description:
-        'Create a pending purchase proposal on behalf of the human. Does not spend. Flags over_budget if amount exceeds remaining.',
+      ...risk({
+        title: 'Propose purchase',
+        description:
+          'Record a pending purchase intent only. Moves no money, creates no receipt, approves no card, and does not contact Stripe or Link. Needs a later human approval via decide_proposal before anything settles. When a budget exists and the amount is above what remains, the proposal is stored with over_budget set and still spends nothing.',
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      }),
       inputSchema: z.object({
         merchant: z.string().describe('Merchant or seller name'),
         amount_usd: z.number().describe('Purchase amount in USD'),
@@ -78,12 +124,20 @@ function createServer() {
   server.registerTool(
     'list_proposals',
     {
-      description: 'List purchase proposals filtered by status (default: pending).',
+      ...risk({
+        title: 'List proposals',
+        description:
+          'Read purchase proposals filtered by status: pending (default), approved, rejected, or all. Does not approve, reject, spend money, or contact Stripe or Link.',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      }),
       inputSchema: z.object({
         status: z
           .enum(['pending', 'approved', 'rejected', 'all'])
           .optional()
-          .describe("Filter: pending (default), approved, rejected, or all"),
+          .describe('Filter: pending (default), approved, rejected, or all'),
       }),
     },
     async (args) => {
@@ -95,11 +149,18 @@ function createServer() {
   server.registerTool(
     'decide_proposal',
     {
-      description:
-        'Approve or reject a pending proposal. Approve in dry_run creates a settled_dry_run receipt with settlement_ref and decrements remaining budget. Refuse double-decide. Live spend is gated and does not charge by default.',
+      ...risk({
+        title: 'Decide proposal',
+        description:
+          'Approve or reject one pending proposal. This is the step a human should confirm. decision=approve settles the purchase: in the default dry-run mode it writes a settled_dry_run receipt, stamps a fake settlement ref (lsrq_dry_…), and decrements the remaining budget, without calling the network. decision=reject spends nothing and writes no receipt. The proposal can be decided only once; repeating the call does not settle again. Live charging stays off unless separate live gates are set on purpose.',
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      }),
       inputSchema: z.object({
         proposal_id: z.string().describe('Proposal id (prop_…)'),
-        decision: z.enum(['approve', 'reject']).describe('approve or reject'),
+        decision: z.enum(['approve', 'reject']).describe('approve settles; reject spends nothing'),
         note: z.string().optional().describe('Optional decision note'),
       }),
     },
@@ -112,7 +173,15 @@ function createServer() {
   server.registerTool(
     'get_receipts',
     {
-      description: 'List receipts newest first (dry-run settlements and refunds).',
+      ...risk({
+        title: 'Get receipts',
+        description:
+          'Read receipts, newest first, including dry-run settlements and refunds. Does not refund, spend money, or contact Stripe or Link.',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      }),
       inputSchema: z.object({
         limit: z.number().int().positive().optional().describe('Max receipts to return'),
       }),
@@ -126,8 +195,15 @@ function createServer() {
   server.registerTool(
     'refund_receipt',
     {
-      description:
-        'Mark a settled dry-run receipt as refunded and restore budget. Dry-run only.',
+      ...risk({
+        title: 'Refund receipt',
+        description:
+          'Reverse a settled dry-run receipt and restore that amount to the remaining budget. This is the step a human should confirm. Does not contact Stripe or Link. A receipt can be refunded only once; repeating the call does not refund again. Refuses receipts that are not settled_dry_run.',
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      }),
       inputSchema: z.object({
         receipt_id: z.string().describe('Receipt id (rcpt_…)'),
         reason: z.string().optional().describe('Refund reason'),
