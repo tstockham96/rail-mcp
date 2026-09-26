@@ -39,20 +39,40 @@ Ledger files (`budget.json`, `proposals.json`, `receipts.json`) are written to `
 npm install
 npm start          # tsc → dist/, then stdio MCP server
 npm run dev        # tsx watch src/index.ts
-npm run smoke      # ledger smoke test (no MCP client, dry-run, no network)
+npm run smoke      # dry-run ledger smoke test; throwaway dir only (never ./data or RAIL_DATA_DIR)
 ```
+
+`npm run smoke` forces `RAIL_MODE=dry_run`, never enables live charge gates, and writes the ledger only under a temporary directory it creates and deletes. `./data` and `RAIL_DATA_DIR` are left untouched even when `RAIL_DATA_DIR` is set in the environment.
 
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
-| `set_budget` | Overwrite active budget (`amount_usd`, optional `currency`, `note`) |
-| `get_budget` | Budget, spent, remaining, open proposals count |
-| `propose_purchase` | Create pending proposal; flags `over_budget` if needed; does **not** spend |
-| `list_proposals` | Filter by `pending` (default) / `approved` / `rejected` / `all` |
-| `decide_proposal` | `approve` → dry-run receipt (`settled_dry_run` + `settlement_ref`) and decrement remaining; `reject` → no spend; no double-decide |
-| `get_receipts` | Newest first |
-| `refund_receipt` | Mark refunded, restore budget (dry-run) |
+| `set_budget` | Overwrite the local budget limit. Moves no money |
+| `get_budget` | Read budget, spent, remaining, open proposals count |
+| `propose_purchase` | Record a pending intent only. Moves no money. Needs a later human approval |
+| `list_proposals` | Read proposals by `pending` (default) / `approved` / `rejected` / `all` |
+| `decide_proposal` | Human confirmation step. `approve` settles (dry-run receipt + `settlement_ref`, remaining decremented). `reject` spends nothing. No double-decide |
+| `get_receipts` | Read receipts, newest first |
+| `refund_receipt` | Human confirmation step. Reverse a dry-run settlement and restore budget |
+
+## Permission model
+
+Proposing a purchase is cheap. Settling one is not. An agent may record intent without moving money. The human should confirm the call that settles a purchase or reverses a receipt.
+
+Hosts should read `title`, `description`, and `annotations` from `tools/list`. Every hint is set explicitly. The spec defaults (`readOnlyHint` false, `destructiveHint` true, `openWorldHint` true) would otherwise treat every tool as a destructive open-world write. Rail's ledger is local. Default mode is dry-run: no network and no charge.
+
+| Tool | readOnlyHint | destructiveHint | idempotentHint | openWorldHint | Host should |
+|------|--------------|-----------------|----------------|---------------|-------------|
+| `set_budget` | false | false | true | false | Allow. Overwrites the local limit only. The same arguments do not stack or spend |
+| `get_budget` | true | false | true | false | Allow. Read-only |
+| `propose_purchase` | false | false | false | false | Allow. Adds one pending intent and spends nothing. Each call creates a new proposal |
+| `list_proposals` | true | false | true | false | Allow. Read-only |
+| `decide_proposal` | false | true | true | false | Confirm with the human. `approve` settles and decrements remaining budget. A repeat does not settle again |
+| `get_receipts` | true | false | true | false | Allow. Read-only |
+| `refund_receipt` | false | true | true | false | Confirm with the human. Reverses a dry-run settlement and restores budget. A repeat does not refund again |
+
+`destructiveHint` is the confirmation signal, and it is true only for `decide_proposal` and `refund_receipt`. `openWorldHint` is false on every tool: dry-run never leaves the ledger, and live Link stays behind separate environment gates. Annotations are hints for the host. They do not themselves move money.
 
 Mode defaults to `RAIL_MODE=dry_run`. Money is stored as integer cents; tools display USD with 2 decimals. IDs: `prop_…`, `rcpt_…`, dry-run Link refs `lsrq_dry_…` on `settlement_ref`.
 
