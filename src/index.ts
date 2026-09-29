@@ -48,7 +48,7 @@ function risk(input: ToolRisk) {
 function createServer() {
   const server = new McpServer({
     name: 'rail',
-    version: '0.1.0',
+    version: '0.1.1',
   });
 
   server.registerTool(

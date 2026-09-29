@@ -1,7 +1,25 @@
 {
   "name": "rail-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Rail — agent spend-and-settle MCP (budgets, propose→approve, receipts) wrapping Stripe Link. Not a marketplace.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agents",
+    "payments",
+    "budget",
+    "stripe",
+    "cursor"
+  ],
+  "homepage": "https://github.com/tstockham96/rail-mcp",
+  "bugs": {
+    "url": "https://github.com/tstockham96/rail-mcp/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tstockham96/rail-mcp.git"
+  },
   "type": "module",
   "bin": {
     "rail-mcp": "dist/index.js"
@@ -9,7 +27,8 @@
   "main": "./dist/index.js",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -25,10 +44,6 @@
   },
   "publishConfig": {
     "access": "public"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/tstockham96/rail-mcp.git"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.1.0",
