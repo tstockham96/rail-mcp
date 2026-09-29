@@ -191,7 +191,7 @@ export async function createSpendRequest(
 
   if (process.env.RAIL_ALLOW_LIVE_CHARGE !== '1') {
     throw new Error(
-      `live charge blocked — set RAIL_ALLOW_LIVE_CHARGE=1 only after Thomas explicitly enables live spend. No request was sent (${call.method} ${call.url}).`,
+      `live charge blocked — set RAIL_ALLOW_LIVE_CHARGE=1 only after live spend is explicitly enabled. No request was sent (${call.method} ${call.url}).`,
     );
   }
 

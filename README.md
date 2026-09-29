@@ -1,10 +1,14 @@
 # Rail MCP
 
-**Rail** is an agent spend-and-settle layer: agents buy on a human's behalf under an explicit budget, with a propose→approve gate and a receipts/refunds ledger. It is **not** a marketplace, storefront, or outreach tool. Rail wraps Stripe Link for credentials and owns budget, policy, and receipts. It does not issue cards. Default mode is **dry-run** (no network, no charges).
+Rail is a budget, approval and receipt layer that agents call when they buy something on a human's behalf, dry-run by default, wrapping Stripe Link for settlement rather than issuing cards.
 
-## Install
+It is not a marketplace, storefront, or outreach tool. Rail owns the budget, the approval gate, and the receipt ledger.
 
-Works in Cursor, Claude Desktop, and any other stdio MCP host. Requires Node.js 20+. The published package runs compiled JavaScript (`dist/`); end users do not need `tsx`.
+## Quickstart
+
+Requires Node.js 20+. Run the published package with `npx -y rail-mcp`. Default mode is dry-run: no network and no charges.
+
+**Claude Desktop** and any other host that takes an `mcpServers` block:
 
 ```json
 {
@@ -17,11 +21,7 @@ Works in Cursor, Claude Desktop, and any other stdio MCP host. Requires Node.js 
 }
 ```
 
-`RAIL_MODE` defaults to `dry_run`. Never put Stripe or Link secrets (`STRIPE_SECRET_KEY`, `LINK_ACCESS_TOKEN`, or live-spend flags) in this shared snippet. Real charges stay off unless those gates are set on purpose, outside the shared config. See [Stripe Link seam](#stripe-link-seam).
-
-**Grok Bot:** add a custom MCP via `npx -y rail-mcp`.
-
-**Cursor:** one-click install from the deeplink below ([install links](https://cursor.com/docs/mcp/install-links)). The `config` value is the base64 of `{"command":"npx","args":["-y","rail-mcp"]}`.
+**Cursor:** one-click install ([install links](https://cursor.com/docs/mcp/install-links)). The `config` value is the base64 of `{"command":"npx","args":["-y","rail-mcp"]}`.
 
 [Install Rail in Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=rail&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInJhaWwtbWNwIl19)
 
@@ -29,20 +29,23 @@ Works in Cursor, Claude Desktop, and any other stdio MCP host. Requires Node.js 
 cursor://anysphere.cursor-deeplink/mcp/install?name=rail&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInJhaWwtbWNwIl19
 ```
 
+**Grok Bot:** add a custom MCP with `npx -y rail-mcp`.
+
+Do not put Stripe or Link secrets (`STRIPE_SECRET_KEY`, `LINK_ACCESS_TOKEN`, or live-spend flags) in this shared snippet. Real charges stay off unless those gates are set on purpose, outside the shared config. See [Stripe Link seam](#stripe-link-seam).
+
 Ledger files (`budget.json`, `proposals.json`, `receipts.json`) are written to `./data` under the process working directory, or to `RAIL_DATA_DIR` when that is set. They are local state, not part of the npm package.
 
-### Local checkout
+## Example
 
-`tsx` is a dev dependency for dogfood in this repo. `npm run smoke` runs the TypeScript sources directly and does not need a build. `npm start` compiles first, then runs `dist/index.js` (the same file the `rail-mcp` bin points at).
+Set a budget, propose a purchase, have a human approve it, then read the receipt. Dry-run moves no money off the machine.
 
-```bash
-npm install
-npm start          # tsc → dist/, then stdio MCP server
-npm run dev        # tsx watch src/index.ts
-npm run smoke      # dry-run ledger smoke test; throwaway dir only (never ./data or RAIL_DATA_DIR)
-```
+1. `set_budget` → `{ "amount_usd": 50, "note": "week1" }`
+2. `propose_purchase` → `{ "merchant": "Acme", "amount_usd": 12, "rationale": "need widgets" }`
+3. `get_budget` still shows remaining `50.00` and `open_proposals: 1`. The proposal is pending until a human decides.
+4. `decide_proposal` → `{ "proposal_id": "prop_…", "decision": "approve" }`
+5. `get_receipts` returns one `settled_dry_run` receipt with a `settlement_ref`. Remaining budget is `38.00`.
 
-`npm run smoke` forces `RAIL_MODE=dry_run`, never enables live charge gates, and writes the ledger only under a temporary directory it creates and deletes. `./data` and `RAIL_DATA_DIR` are left untouched even when `RAIL_DATA_DIR` is set in the environment.
+Rejecting spends nothing. `refund_receipt` reverses a dry-run settlement and restores the budget.
 
 ## Tools
 
@@ -76,14 +79,18 @@ Hosts should read `title`, `description`, and `annotations` from `tools/list`. E
 
 Mode defaults to `RAIL_MODE=dry_run`. Money is stored as integer cents; tools display USD with 2 decimals. IDs: `prop_…`, `rcpt_…`, dry-run Link refs `lsrq_dry_…` on `settlement_ref`.
 
-## Dogfood walkthrough
+## Local checkout
 
-1. `set_budget` → `{ "amount_usd": 50, "note": "week1" }`
-2. `propose_purchase` → `{ "merchant": "Acme", "amount_usd": 12, "rationale": "need widgets" }`
-3. `get_budget` → remaining still `50.00`, `open_proposals: 1`
-4. `decide_proposal` → `{ "proposal_id": "prop_…", "decision": "approve" }`
-5. `get_receipts` → one `settled_dry_run` receipt with `settlement_ref`; remaining `38.00`
-6. Optional: `refund_receipt` → budget restored
+`tsx` is a dev dependency for dogfood in this repo. `npm run smoke` runs the TypeScript sources directly and does not need a build. `npm start` compiles first, then runs `dist/index.js` (the same file the `rail-mcp` bin points at).
+
+```bash
+npm install
+npm start          # tsc → dist/, then stdio MCP server
+npm run dev        # tsx watch src/index.ts
+npm run smoke      # dry-run ledger smoke test; throwaway dir only (never ./data or RAIL_DATA_DIR)
+```
+
+`npm run smoke` forces `RAIL_MODE=dry_run`, never enables live charge gates, and writes the ledger only under a temporary directory it creates and deletes. `./data` and `RAIL_DATA_DIR` are left untouched even when `RAIL_DATA_DIR` is set in the environment.
 
 ## Stripe Link seam
 
@@ -93,7 +100,7 @@ Rail asks Link for a one-time credential. Rail still decides budget and policy a
 - **`RAIL_MODE=live` without gates:** throws `live mode not enabled — set keys and get explicit human approval` unless **both** `STRIPE_SECRET_KEY` and `RAIL_LIVE=1` are set. The proposal stays pending and no receipt is written.
 - **Live with those two gates:** the `POST https://api.link.com/spend_requests` body is scaffolded only (see `src/stripeLink.ts`). Nothing is sent unless `RAIL_ALLOW_LIVE_CHARGE=1`.
 - **`RAIL_ALLOW_LIVE_CHARGE=1`:** the only branch allowed to call Link, and only if `LINK_ACCESS_TOKEN` is also set. `STRIPE_SECRET_KEY` is a presence gate and is never sent. There is no Stripe Issuing card create. Docs: [Link CLI](https://docs.stripe.com/agentic-commerce/link-cli), [link-cli](https://github.com/stripe/link-cli), [Issuing for agents](https://docs.stripe.com/issuing/agents).
-- **Thomas has to explicitly enable live spend** by setting those env vars on purpose. A posted Link request is stored as `link_pending_human` and does not decrement the dry-run budget. CI and `npm run smoke` stay on dry-run and do not charge.
+- Live spend stays off until those env vars are set on purpose. A posted Link request is stored as `link_pending_human` and does not decrement the dry-run budget. CI and `npm run smoke` stay on dry-run and do not charge.
 
 | Env | Role |
 |-----|------|
@@ -104,7 +111,7 @@ Rail asks Link for a one-time credential. Rail still decides budget and policy a
 | `RAIL_ALLOW_LIVE_CHARGE=1` | Additional gate before any Link HTTP |
 | `LINK_ACCESS_TOKEN` | Link OAuth token. Required before the scaffolded POST actually runs |
 
-## Explicit non-goals (this wedge)
+## Explicit non-goals
 
 - No marketplace UI
 - No outreach / messaging
@@ -113,4 +120,4 @@ Rail asks Link for a one-time credential. Rail still decides budget and policy a
 
 ## License
 
-Install from npm as `rail-mcp`. No license file is included in 0.1.0. Publishing the package does not make this GitHub repository public.
+[MIT](LICENSE). Copyright 2026 Thomas Stockham.
