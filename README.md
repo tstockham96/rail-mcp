@@ -11,7 +11,7 @@ Works in Cursor, Claude Desktop, and any other stdio MCP host. Requires Node.js 
   "mcpServers": {
     "rail": {
       "command": "npx",
-      "args": ["-y", "@rail-mcp/server"]
+      "args": ["-y", "rail-mcp"]
     }
   }
 }
@@ -19,14 +19,14 @@ Works in Cursor, Claude Desktop, and any other stdio MCP host. Requires Node.js 
 
 `RAIL_MODE` defaults to `dry_run`. Never put Stripe or Link secrets (`STRIPE_SECRET_KEY`, `LINK_ACCESS_TOKEN`, or live-spend flags) in this shared snippet. Real charges stay off unless those gates are set on purpose, outside the shared config. See [Stripe Link seam](#stripe-link-seam).
 
-**Grok Bot:** add a custom MCP via `npx -y @rail-mcp/server`.
+**Grok Bot:** add a custom MCP via `npx -y rail-mcp`.
 
-**Cursor:** one-click install from the deeplink below ([install links](https://cursor.com/docs/mcp/install-links)). The `config` value is the base64 of `{"command":"npx","args":["-y","@rail-mcp/server"]}`.
+**Cursor:** one-click install from the deeplink below ([install links](https://cursor.com/docs/mcp/install-links)). The `config` value is the base64 of `{"command":"npx","args":["-y","rail-mcp"]}`.
 
-[Install Rail in Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=rail&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkByYWlsLW1jcC9zZXJ2ZXIiXX0=)
+[Install Rail in Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=rail&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInJhaWwtbWNwIl19)
 
 ```
-cursor://anysphere.cursor-deeplink/mcp/install?name=rail&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkByYWlsLW1jcC9zZXJ2ZXIiXX0=
+cursor://anysphere.cursor-deeplink/mcp/install?name=rail&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInJhaWwtbWNwIl19
 ```
 
 Ledger files (`budget.json`, `proposals.json`, `receipts.json`) are written to `./data` under the process working directory, or to `RAIL_DATA_DIR` when that is set. They are local state, not part of the npm package.
@@ -113,4 +113,4 @@ Rail asks Link for a one-time credential. Rail still decides budget and policy a
 
 ## License
 
-Install from npm as `@rail-mcp/server`. No license file is included in 0.1.0. Publishing the package does not make this GitHub repository public.
+Install from npm as `rail-mcp`. No license file is included in 0.1.0. Publishing the package does not make this GitHub repository public.

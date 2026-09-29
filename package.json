@@ -1,5 +1,5 @@
 {
-  "name": "@rail-mcp/server",
+  "name": "rail-mcp",
   "version": "0.1.0",
   "description": "Rail — agent spend-and-settle MCP (budgets, propose→approve, receipts) wrapping Stripe Link. Not a marketplace.",
   "type": "module",
