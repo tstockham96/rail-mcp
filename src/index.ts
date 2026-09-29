@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
@@ -45,10 +48,21 @@ function risk(input: ToolRisk) {
   };
 }
 
+function packageVersion(): string {
+  const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
+  const parsed = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version?: unknown };
+  if (typeof parsed.version !== 'string' || parsed.version.trim() === '') {
+    throw new Error(`rail-mcp: missing version in ${pkgPath}`);
+  }
+  return parsed.version;
+}
+
+const serverVersion = packageVersion();
+
 function createServer() {
   const server = new McpServer({
     name: 'rail',
-    version: '0.1.1',
+    version: serverVersion,
   });
 
   server.registerTool(

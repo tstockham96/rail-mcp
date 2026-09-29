@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import { createSpendRequest, railMode, type RailMode } from './stripeLink.js';
@@ -11,26 +12,35 @@ function envDataDir(): string | undefined {
 }
 
 /**
+ * Per-user ledger. Independent of the process working directory, so a host
+ * that launches the server from `/` does not try to create `/data`.
+ */
+function defaultDataDir(): string {
+  return path.join(os.homedir(), '.rail');
+}
+
+/**
  * Ledger directory.
  * `setDataDirForTests` wins when a test has pinned a throwaway dir.
- * Otherwise `RAIL_DATA_DIR`, or `./data` from the process working directory.
+ * Otherwise `RAIL_DATA_DIR`, or `~/.rail` under the user home directory.
  */
 export function getDataDir(): string {
   if (dataDirOverride) return dataDirOverride;
-  return envDataDir() ?? path.resolve(process.cwd(), 'data');
+  return envDataDir() ?? defaultDataDir();
 }
 
 /**
  * Pin the ledger at a throwaway directory for tests.
- * Refuses `./data` and `RAIL_DATA_DIR` so a test cannot write the real ledger.
+ * Refuses `~/.rail`, `./data`, and `RAIL_DATA_DIR` so a test cannot write the real ledger.
  */
 export function setDataDirForTests(dir: string): void {
   const resolved = path.resolve(dir);
   const cwdData = path.resolve(process.cwd(), 'data');
   const fromEnv = envDataDir();
-  if (resolved === cwdData || resolved === fromEnv) {
+  const userDefault = defaultDataDir();
+  if (resolved === cwdData || resolved === fromEnv || resolved === userDefault) {
     throw new Error(
-      'setDataDirForTests refused: directory must not be ./data or RAIL_DATA_DIR',
+      'setDataDirForTests refused: directory must not be ~/.rail, ./data, or RAIL_DATA_DIR',
     );
   }
   dataDirOverride = resolved;

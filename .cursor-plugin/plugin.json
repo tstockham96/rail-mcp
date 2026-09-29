@@ -1,0 +1,14 @@
+{
+  "name": "rail",
+  "displayName": "Rail",
+  "version": "0.1.1",
+  "description": "Budget, approval, and receipt layer for agents that buy on a human's behalf. The agent proposes, a human approves, and each settled purchase gets a receipt that can be refunded. Dry-run by default; live settlement goes through Stripe Link only behind explicit env gates.",
+  "author": {
+    "name": "Thomas Stockham",
+    "url": "https://github.com/tstockham96"
+  },
+  "homepage": "https://github.com/tstockham96/rail-mcp#readme",
+  "repository": "https://github.com/tstockham96/rail-mcp",
+  "license": "MIT",
+  "keywords": ["mcp", "agents", "payments", "budget", "approval", "receipts", "refunds", "stripe", "stripe-link", "agentic-commerce"]
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tstockham96/rail-mcp",
+  "title": "Rail",
+  "description": "Budgets, propose-then-approve, and receipts for agents that buy for a human. Dry-run by default.",
+  "repository": {
+    "url": "https://github.com/tstockham96/rail-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/tstockham96/rail-mcp#readme",
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "rail-mcp",
+      "version": "0.1.1",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "RAIL_DATA_DIR",
+          "description": "Directory for the local ledger (budget, proposals, receipts). Defaults to ~/.rail in the user home directory. Set to override.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
+        }
+      ]
+    }
+  ]
+}

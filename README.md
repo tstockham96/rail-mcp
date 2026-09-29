@@ -33,7 +33,7 @@ cursor://anysphere.cursor-deeplink/mcp/install?name=rail&config=eyJjb21tYW5kIjoi
 
 Do not put Stripe or Link secrets (`STRIPE_SECRET_KEY`, `LINK_ACCESS_TOKEN`, or live-spend flags) in this shared snippet. Real charges stay off unless those gates are set on purpose, outside the shared config. See [Stripe Link seam](#stripe-link-seam).
 
-Ledger files (`budget.json`, `proposals.json`, `receipts.json`) are written to `./data` under the process working directory, or to `RAIL_DATA_DIR` when that is set. They are local state, not part of the npm package.
+Ledger files (`budget.json`, `proposals.json`, `receipts.json`) are written to `~/.rail` in the user home directory, or to `RAIL_DATA_DIR` when that is set. They are local state, not part of the npm package. The default does not follow the process working directory, so a host that starts the server from `/` still writes under the home directory.
 
 ## Example
 
@@ -87,10 +87,10 @@ Mode defaults to `RAIL_MODE=dry_run`. Money is stored as integer cents; tools di
 npm install
 npm start          # tsc → dist/, then stdio MCP server
 npm run dev        # tsx watch src/index.ts
-npm run smoke      # dry-run ledger smoke test; throwaway dir only (never ./data or RAIL_DATA_DIR)
+npm run smoke      # dry-run ledger smoke test; throwaway dirs only (never ./data, ~/.rail, or RAIL_DATA_DIR)
 ```
 
-`npm run smoke` forces `RAIL_MODE=dry_run`, never enables live charge gates, and writes the ledger only under a temporary directory it creates and deletes. `./data` and `RAIL_DATA_DIR` are left untouched even when `RAIL_DATA_DIR` is set in the environment.
+`npm run smoke` forces `RAIL_MODE=dry_run`, never enables live charge gates, and writes the ledger only under temporary directories it creates and deletes. `./data`, `~/.rail`, and `RAIL_DATA_DIR` are left untouched even when `RAIL_DATA_DIR` is set in the environment. One check starts the server with its working directory at `/` and `HOME` pointed at a temp directory, then calls a tool. That call succeeds, and the ledger for that check is created under the temp home rather than `/data` or the real `~/.rail`. An explicit `RAIL_DATA_DIR` still overrides the default in that launch.
 
 ## Stripe Link seam
 
@@ -105,7 +105,7 @@ Rail asks Link for a one-time credential. Rail still decides budget and policy a
 | Env | Role |
 |-----|------|
 | `RAIL_MODE` | `dry_run` (default) or `live` |
-| `RAIL_DATA_DIR` | Ledger directory. Default is `./data` from the process working directory |
+| `RAIL_DATA_DIR` | Ledger directory. Default is `~/.rail` in the user home directory. An explicit value overrides the default |
 | `STRIPE_SECRET_KEY` | Required for live. Not used to issue cards or as a Link bearer token |
 | `RAIL_LIVE=1` | Explicit live approval alongside the secret key |
 | `RAIL_ALLOW_LIVE_CHARGE=1` | Additional gate before any Link HTTP |
