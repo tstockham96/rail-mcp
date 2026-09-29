@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "rail": {
+      "command": "npx",
+      "args": ["-y", "rail-mcp"]
+    }
+  }
+}

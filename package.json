@@ -1,6 +1,7 @@
 {
   "name": "rail-mcp",
   "version": "0.1.1",
+  "mcpName": "io.github.tstockham96/rail-mcp",
   "description": "Rail — agent spend-and-settle MCP (budgets, propose→approve, receipts) wrapping Stripe Link. Not a marketplace.",
   "keywords": [
     "mcp",

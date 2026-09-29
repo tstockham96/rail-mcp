@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { promises as fs } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { promises as fs, readFileSync } from 'node:fs';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { railMode } from '../src/stripeLink.js';
@@ -19,6 +19,23 @@ import {
 } from '../src/store.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const packageJson = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
+  name: string;
+  version: string;
+  mcpName?: string;
+};
+
+const initializeRequest = {
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: {
+    protocolVersion: '2025-03-26',
+    capabilities: {},
+    clientInfo: { name: 'rail-smoke', version: '0.0.0' },
+  },
+};
+const initializedNotification = { jsonrpc: '2.0', method: 'notifications/initialized' };
 
 interface ToolAnnotations {
   title?: string;
@@ -33,6 +50,17 @@ interface ListedTool {
   title?: string;
   description?: string;
   annotations?: ToolAnnotations;
+}
+
+interface RpcMessage {
+  id?: number;
+  result?: {
+    serverInfo?: { name?: string; version?: string };
+    tools?: ListedTool[];
+    content?: { type?: string; text?: string }[];
+    isError?: boolean;
+  };
+  error?: { message?: string };
 }
 
 const expectedTools: Record<
@@ -155,22 +183,47 @@ async function fingerprint(dir: string): Promise<string> {
   return parts.join('\n');
 }
 
-async function listToolsOverStdio(dataDir: string): Promise<ListedTool[]> {
-  const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
+function dryRunChildEnv(options: { home?: string; dataDir?: string }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     RAIL_MODE: 'dry_run',
-    RAIL_DATA_DIR: dataDir,
   };
   delete env.STRIPE_SECRET_KEY;
   delete env.RAIL_LIVE;
   delete env.RAIL_ALLOW_LIVE_CHARGE;
   delete env.LINK_ACCESS_TOKEN;
+  if (options.home) {
+    env.HOME = options.home;
+    env.USERPROFILE = options.home;
+  }
+  if (options.dataDir) env.RAIL_DATA_DIR = options.dataDir;
+  else delete env.RAIL_DATA_DIR;
+  return env;
+}
 
+function parseRpcLines(lines: string[]): RpcMessage[] {
+  const messages: RpcMessage[] = [];
+  for (const line of lines) {
+    try {
+      messages.push(JSON.parse(line) as RpcMessage);
+    } catch {
+      // Server stdout can include non-JSON lines; ignore them.
+    }
+  }
+  return messages;
+}
+
+async function rpcOverStdio(options: {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  requests: unknown[];
+  untilId: number;
+}): Promise<{ stderr: string; messages: RpcMessage[] }> {
+  const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
   const child = spawn(tsxBin, [path.join(repoRoot, 'src', 'index.ts')], {
-    cwd: repoRoot,
+    cwd: options.cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env,
+    env: options.env,
   });
 
   let stderr = '';
@@ -178,54 +231,159 @@ async function listToolsOverStdio(dataDir: string): Promise<ListedTool[]> {
   child.stderr.on('data', (chunk: string) => {
     stderr += chunk;
   });
+  child.on('error', (err) => {
+    stderr += String(err);
+  });
 
   const lines: string[] = [];
   const rl = createInterface({ input: child.stdout });
   rl.on('line', (line) => lines.push(line));
 
-  const init = {
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: {
-      protocolVersion: '2025-03-26',
-      capabilities: {},
-      clientInfo: { name: 'rail-smoke', version: '0.0.0' },
-    },
-  };
-  child.stdin.write(JSON.stringify(init) + '\n');
-  child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
-  child.stdin.write(
-    JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) + '\n',
-  );
+  for (const request of options.requests) {
+    child.stdin.write(JSON.stringify(request) + '\n');
+  }
 
   const started = Date.now();
   try {
     while (Date.now() - started < 10000) {
-      const listed = lines
-        .map((line) => {
-          try {
-            return JSON.parse(line) as {
-              id?: number;
-              result?: { tools?: ListedTool[] };
-            };
-          } catch {
-            return undefined;
-          }
-        })
-        .find((msg) => msg?.id === 2 && Array.isArray(msg.result?.tools));
-      if (listed?.result?.tools) {
-        assert(stderr.includes('mode=dry_run'), 'stdio server stayed in dry-run');
-        assert(!stderr.includes('mode=live'), 'stdio server did not report live mode');
-        return listed.result.tools;
+      const messages = parseRpcLines(lines);
+      if (messages.some((msg) => msg.id === options.untilId) && stderr.includes('mode=dry_run')) {
+        return { stderr, messages };
       }
       if (child.exitCode !== null) break;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    throw new Error(`FAIL: tools/list timed out. stderr=${stderr}`);
+    throw new Error(`FAIL: stdio id ${options.untilId} timed out. stderr=${stderr}`);
   } finally {
+    try {
+      child.stdin.end();
+    } catch {
+      // stdin may already be closed
+    }
     child.kill('SIGTERM');
     rl.close();
+  }
+}
+
+function assertDryRunStderr(stderr: string): void {
+  assert(stderr.includes('mode=dry_run'), 'stdio server stayed in dry-run');
+  assert(!stderr.includes('mode=live'), 'stdio server did not report live mode');
+}
+
+function assertServerIdentity(messages: RpcMessage[]): void {
+  const init = messages.find((msg) => msg.id === 1);
+  assert(init && !init.error, `initialize failed: ${init?.error?.message ?? 'no response'}`);
+  assert(init.result?.serverInfo?.name === 'rail', 'server name');
+  assert(
+    init.result?.serverInfo?.version === packageJson.version,
+    `server version ${String(init.result?.serverInfo?.version)} is package.json ${packageJson.version}`,
+  );
+}
+
+async function listToolsOverStdio(dataDir: string): Promise<ListedTool[]> {
+  const { stderr, messages } = await rpcOverStdio({
+    cwd: repoRoot,
+    env: dryRunChildEnv({ dataDir }),
+    untilId: 2,
+    requests: [
+      initializeRequest,
+      initializedNotification,
+      { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+    ],
+  });
+  assertDryRunStderr(stderr);
+  assertServerIdentity(messages);
+  const listed = messages.find((msg) => msg.id === 2 && Array.isArray(msg.result?.tools));
+  assert(listed?.result?.tools, 'tools/list result');
+  return listed.result.tools;
+}
+
+function toolPayload(messages: RpcMessage[], id: number): { ok?: boolean; error?: string; budget?: { amount_usd?: string } } {
+  const msg = messages.find((entry) => entry.id === id);
+  assert(msg, `missing rpc id ${id}`);
+  assert(!msg.error, `rpc ${id} error: ${msg.error?.message ?? 'unknown'}`);
+  assert(msg.result?.isError !== true, `tool ${id} isError`);
+  const text = msg.result?.content?.find((part) => part.type === 'text')?.text;
+  assert(text, `tool ${id} missing text`);
+  const parsed = JSON.parse(text) as { ok?: boolean; error?: string; budget?: { amount_usd?: string } };
+  assert(parsed.ok === true, `tool ${id} not ok: ${parsed.error ?? text}`);
+  return parsed;
+}
+
+async function absent(file: string): Promise<boolean> {
+  try {
+    await fs.stat(file);
+    return false;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return true;
+    throw err;
+  }
+}
+
+/** Launch from `/` with HOME pointed at a temp dir so the real ledger stays untouched. */
+async function assertLaunchFromRoot(): Promise<void> {
+  const home = await fs.mkdtemp(path.join(tmpdir(), 'rail-mcp-home-'));
+  const explicit = await fs.mkdtemp(path.join(tmpdir(), 'rail-mcp-explicit-'));
+  const home2 = await fs.mkdtemp(path.join(tmpdir(), 'rail-mcp-home-'));
+  const rootData = '/data';
+  const beforeRootData = await fingerprint(rootData);
+  try {
+    console.log('\n11) set_budget with cwd / and no RAIL_DATA_DIR');
+    const defaultSession = await rpcOverStdio({
+      cwd: '/',
+      env: dryRunChildEnv({ home }),
+      untilId: 2,
+      requests: [
+        initializeRequest,
+        initializedNotification,
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'set_budget', arguments: { amount_usd: 5, note: 'cwd-root' } },
+        },
+      ],
+    });
+    assertDryRunStderr(defaultSession.stderr);
+    assertServerIdentity(defaultSession.messages);
+    const payload = toolPayload(defaultSession.messages, 2);
+    assert(payload.budget?.amount_usd === '5.00', 'budget written from /');
+    const ledger = path.join(home, '.rail', 'budget.json');
+    const budgetRaw = await fs.readFile(ledger, 'utf8');
+    assert(budgetRaw.includes('"amount_cents": 500'), `ledger landed in ${path.dirname(ledger)}`);
+    assert(await absent(path.join(explicit, 'budget.json')), 'default launch did not use RAIL_DATA_DIR');
+    assert(await fingerprint(rootData) === beforeRootData, '/data unchanged after default launch');
+    console.log(`ledger written under temp HOME: ${path.dirname(ledger)}`);
+
+    console.log('\n12) RAIL_DATA_DIR wins when cwd is /');
+    const explicitSession = await rpcOverStdio({
+      cwd: '/',
+      env: dryRunChildEnv({ home: home2, dataDir: explicit }),
+      untilId: 2,
+      requests: [
+        initializeRequest,
+        initializedNotification,
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'set_budget', arguments: { amount_usd: 7, note: 'explicit' } },
+        },
+      ],
+    });
+    assertDryRunStderr(explicitSession.stderr);
+    assertServerIdentity(explicitSession.messages);
+    const wrote = toolPayload(explicitSession.messages, 2);
+    assert(wrote.budget?.amount_usd === '7.00', 'budget written via RAIL_DATA_DIR');
+    const explicitBudget = await fs.readFile(path.join(explicit, 'budget.json'), 'utf8');
+    assert(explicitBudget.includes('"amount_cents": 700'), 'ledger landed in RAIL_DATA_DIR');
+    assert(await absent(path.join(home2, '.rail')), 'explicit RAIL_DATA_DIR did not fall back to ~/.rail');
+    assert(await fingerprint(rootData) === beforeRootData, '/data unchanged after explicit launch');
+    console.log(`explicit ledger: ${explicit}`);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+    await fs.rm(home2, { recursive: true, force: true });
+    await fs.rm(explicit, { recursive: true, force: true });
   }
 }
 
@@ -342,19 +500,48 @@ async function runSmoke(networkCalls: () => number) {
   assertToolList(tools);
   forceDryRun();
 
+  await assertLaunchFromRoot();
+  forceDryRun();
+
   console.log('\nSMOKE OK');
 }
 
 async function main() {
+  assert(packageJson.name === 'rail-mcp', 'package name');
+  assert(packageJson.mcpName === 'io.github.tstockham96/rail-mcp', 'mcpName');
+
   const cwdData = path.resolve(process.cwd(), 'data');
+  const userLedger = path.join(os.homedir(), '.rail');
   const inheritedDataDir = process.env.RAIL_DATA_DIR?.trim()
     ? path.resolve(process.env.RAIL_DATA_DIR.trim())
     : undefined;
   const beforeCwd = await fingerprint(cwdData);
+  const beforeUser = await fingerprint(userLedger);
   const beforeInherited =
-    inheritedDataDir && inheritedDataDir !== cwdData ? await fingerprint(inheritedDataDir) : undefined;
+    inheritedDataDir && inheritedDataDir !== cwdData && inheritedDataDir !== userLedger
+      ? await fingerprint(inheritedDataDir)
+      : undefined;
 
   forceDryRun();
+
+  delete process.env.RAIL_DATA_DIR;
+  assert(
+    getDataDir() === userLedger,
+    `default ledger is ~/.rail (got ${getDataDir()})`,
+  );
+  const explicitProbe = await fs.mkdtemp(path.join(tmpdir(), 'rail-mcp-env-probe-'));
+  process.env.RAIL_DATA_DIR = explicitProbe;
+  assert(getDataDir() === explicitProbe, 'RAIL_DATA_DIR overrides ~/.rail');
+  await fs.rm(explicitProbe, { recursive: true, force: true });
+  delete process.env.RAIL_DATA_DIR;
+
+  let refusedUserLedger = false;
+  try {
+    setDataDirForTests(userLedger);
+  } catch (err: unknown) {
+    refusedUserLedger = err instanceof Error && err.message.includes('refused');
+  }
+  assert(refusedUserLedger, 'setDataDirForTests refuses ~/.rail');
 
   const sentinel = await fs.mkdtemp(path.join(tmpdir(), 'rail-mcp-env-sentinel-'));
   const smokeDir = await fs.mkdtemp(path.join(tmpdir(), 'rail-mcp-smoke-'));
@@ -367,6 +554,7 @@ async function main() {
   assert(getDataDir() === smokeDir, 'ledger pinned to throwaway dir');
   assert(getDataDir() !== sentinel, 'ledger is not the RAIL_DATA_DIR sentinel');
   assert(getDataDir() !== cwdData, 'ledger is not ./data');
+  assert(getDataDir() !== userLedger, 'ledger is not ~/.rail');
 
   let networkCalls = 0;
   const previousFetch = globalThis.fetch;
@@ -391,13 +579,17 @@ async function main() {
   }
 
   const afterCwd = await fingerprint(cwdData);
+  const afterUser = await fingerprint(userLedger);
   const afterSentinel = await fingerprint(sentinel);
   const afterInherited =
-    inheritedDataDir && inheritedDataDir !== cwdData ? await fingerprint(inheritedDataDir) : undefined;
+    inheritedDataDir && inheritedDataDir !== cwdData && inheritedDataDir !== userLedger
+      ? await fingerprint(inheritedDataDir)
+      : undefined;
   await fs.rm(sentinel, { recursive: true, force: true });
 
   const isolationProblems: string[] = [];
   if (afterCwd !== beforeCwd) isolationProblems.push(`./data changed (${cwdData})`);
+  if (afterUser !== beforeUser) isolationProblems.push(`~/.rail changed (${userLedger})`);
   if (afterSentinel !== beforeSentinel) {
     isolationProblems.push(`RAIL_DATA_DIR sentinel changed (${sentinel})`);
   }
@@ -414,6 +606,7 @@ async function main() {
 
   console.log(`\nledger isolation: throwaway ${smokeDir} removed`);
   console.log(`./data unchanged (${beforeCwd === 'MISSING' ? 'absent' : cwdData})`);
+  console.log(`~/.rail unchanged (${beforeUser === 'MISSING' ? 'absent' : userLedger})`);
   console.log(`RAIL_DATA_DIR sentinel unchanged (${sentinel})`);
   if (inheritedDataDir && inheritedDataDir !== cwdData) {
     console.log(`inherited RAIL_DATA_DIR unchanged (${inheritedDataDir})`);
